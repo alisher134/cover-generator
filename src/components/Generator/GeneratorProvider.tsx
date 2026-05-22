@@ -4,7 +4,7 @@ import * as React from 'react';
 
 import { generatorContext } from './GeneratorContext';
 
-import { generateMockCoverLetter } from '@/lib/generatorLogic';
+import { processPipelineAction } from '@/app/actions/generator';
 import type {
   CopyStatus,
   DragState,
@@ -23,10 +23,12 @@ export function GeneratorProvider({ children }: { children: React.ReactNode }) {
 
   const pipelineSteps = React.useMemo(
     () => [
-      { label: 'Чтение структуры файла резюме...', time: 1200 },
-      { label: 'Извлечение ключевых навыков и опыта...', time: 1400 },
-      { label: 'Семантическое сопоставление с вакансией...', time: 1300 },
-      { label: 'Генерация финального сопроводительного письма...', time: 1500 },
+      { label: 'Чтение и извлечение текста резюме...', time: 1200 },
+      { label: 'Нормализация текста и защита от инъекций...', time: 1000 },
+      { label: 'Структурирование профиля кандидата с помощью AI...', time: 1500 },
+      { label: 'Семантический анализ требований вакансии через AI...', time: 1300 },
+      { label: 'Генерация персонализированного сопроводительного письма...', time: 1600 },
+      { label: 'Финальная валидация и защита от галлюцинаций...', time: 1200 },
     ],
     [],
   );
@@ -52,32 +54,77 @@ export function GeneratorProvider({ children }: { children: React.ReactNode }) {
     (e: React.SyntheticEvent<HTMLFormElement>) => {
       e.preventDefault();
 
+      if (!resumeFile) {
+        setErrors((prev) => ({ ...prev, resumeFile: 'Пожалуйста, выберите или перетащите файл резюме (PDF, DOCX, TXT).' }));
+
+        return;
+      }
+
+      if (!jobDescription || jobDescription.trim().length < 10) {
+        setErrors((prev) => ({ ...prev, jobDescription: 'Пожалуйста, введите описание вакансии (минимум 10 символов).' }));
+
+        return;
+      }
+
       setErrors({});
       setGenerationText('');
       setStatus({ currentStep: 0, type: 'processing' });
 
+      const formData = new FormData();
+
+      formData.append('resumeFile', resumeFile);
+      formData.append('jobDescription', jobDescription);
+
       let currentStep = 0;
+      let serverResult: { success: boolean; coverLetter?: string; error?: string } | null = null;
+      let isStepperFinished = false;
 
-      const runPipeline = () => {
-        if (currentStep < pipelineSteps.length) {
-          setTimeout(() => {
-            currentStep += 1;
+      const checkCompletion = () => {
+        if (isStepperFinished && serverResult !== null) {
+          if (serverResult.success && serverResult.coverLetter !== undefined) {
+            const letter = serverResult.coverLetter;
 
-            if (currentStep < pipelineSteps.length) {
-              setStatus({ currentStep, type: 'processing' });
-              runPipeline();
-            } else {
-              const fileNameStr = resumeFile !== null ? resumeFile.name : '';
-              const fullLetterText = generateMockCoverLetter(fileNameStr, jobDescription);
-
-              setStatus({ letterText: fullLetterText, type: 'success' });
-              streamLetter(fullLetterText);
-            }
-          }, pipelineSteps[currentStep].time);
+            setStatus({ letterText: letter, type: 'success' });
+            streamLetter(letter);
+          } else {
+            setStatus({ type: 'idle' });
+            setErrors({
+              jobDescription: serverResult.error ?? 'Произошла непредвиденная ошибка при генерации.',
+            });
+          }
         }
       };
 
-      runPipeline();
+      const runServerAction = async () => {
+        try {
+          const res = await processPipelineAction(formData);
+
+          serverResult = res;
+        } catch (err) {
+          serverResult = {
+            error: err instanceof Error ? err.message : 'Произошла ошибка при вызове сервера.',
+            success: false,
+          };
+        }
+
+        checkCompletion();
+      };
+
+      const runStepper = () => {
+        if (currentStep < pipelineSteps.length - 1) {
+          setTimeout(() => {
+            currentStep += 1;
+            setStatus({ currentStep, type: 'processing' });
+            runStepper();
+          }, pipelineSteps[currentStep].time);
+        } else {
+          isStepperFinished = true;
+          checkCompletion();
+        }
+      };
+
+      void runServerAction();
+      runStepper();
     },
     [jobDescription, resumeFile, pipelineSteps, streamLetter],
   );

@@ -32,7 +32,7 @@ const eslintConfig = defineConfig([
         },
         // Булевы переменные должны иметь префиксы is, has, should, can, did, was
         {
-          format: ['camelCase'],
+          format: ['camelCase', 'PascalCase'],
           prefix: ['is', 'has', 'should', 'can', 'did', 'was'],
           selector: 'variable',
           types: ['boolean'],
